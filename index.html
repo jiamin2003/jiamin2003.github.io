@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>躲避障碍 — 简单 H5 游戏</title>
+<style>
+  :root{
+    --bg:#0f1724;
+    --card:#0b1220;
+    --accent:#38bdf8;
+    --muted:#94a3b8;
+  }
+  html,body{
+    height:100%;
+    margin:0;
+    font-family: "Helvetica Neue", Arial, "PingFang SC","Hiragino Sans GB", "Microsoft Yahei", sans-serif;
+    background: linear-gradient(180deg, #061226 0%, #081626 100%);
+    color:#e6eef8;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wrap{
+    max-width:900px;
+    margin:20px auto;
+    padding:12px;
+  }
+  .card{
+    background: rgba(255,255,255,0.02);
+    border-radius:12px;
+    box-shadow: 0 6px 24px rgba(2,6,23,0.6);
+    padding:12px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+  }
+  canvas{
+    width:100%;
+    height:60vh;
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.06));
+    border-radius:8px;
+    display:block;
+    touch-action: none; /* prevent default gestures */
+  }
+  .hud{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .score{
+    font-size:16px;
+    color:var(--accent);
+    font-weight:700;
+  }
+  .muted{ color:var(--muted); font-size:13px; }
+  .controls{
+    display:flex;
+    gap:8px;
+    align-items:center;
+  }
+  button{
+    background:transparent;
+    border:1px solid rgba(255,255,255,0.06);
+    color:inherit;
+    padding:8px 12px;
+    border-radius:8px;
+    cursor:pointer;
+    backdrop-filter: blur(4px);
+  }
+  button.primary{
+    background:linear-gradient(90deg, rgba(56,189,248,0.12), rgba(14,165,233,0.08));
+    border:1px solid rgba(56,189,248,0.28);
+    color:var(--accent);
+    font-weight:700;
+  }
+  .overlay{
+    position:absolute;
+    inset:0;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    pointer-events:none;
+  }
+  .panel{
+    width:88%;
+    max-width:420px;
+    background:rgba(2,6,23,0.8);
+    border-radius:12px;
+    padding:18px;
+    text-align:center;
+    pointer-events:auto;
+    box-shadow:0 8px 32px rgba(2,6,23,0.6);
+  }
+  .big{
+    font-size:28px;
+    margin-bottom:6px;
+  }
+  .small{ color:var(--muted); font-size:13px; margin-bottom:12px; }
+  .touch-pad{
+    position:relative;
+    margin-top:8px;
+    display:flex;
+    gap:8px;
+    justify-content:center;
+  }
+  .touch-btn{
+    width:110px;
+    height:44px;
+    line-height:44px;
+    border-radius:10px;
+    background:rgba(255,255,255,0.03);
+    border:1px solid rgba(255,255,255,0.04);
+    user-select:none;
+    touch-action:none;
+  }
+  .footer-note{ font-size:12px; color:var(--muted); margin-top:8px; text-align:center; }
+  @media (max-width:600px){
+    canvas{ height:56vh; border-radius:6px; }
+    .touch-btn{ width:42%; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="gameCard" style="position:relative;">
+      <div class="hud">
+        <div>
+          <div class="score">分数: <span id="score">0</span></div>
+          <div class="muted">最高分: <span id="best">0</span></div>
+        </div>
+        <div class="controls">
+          <button id="btnPause">暂停</button>
+          <button id="btnRestart" class="primary">重玩</button>
+        </div>
+      </div>
+
+      <canvas id="gameCanvas"></canvas>
+
+      <div class="footer-note muted">控制：← → / A D 或 屏幕左右触控（移动并躲避障碍）。</div>
+
+      <!-- Start / Game Over Overlay -->
+      <div id="overlay" class="overlay" style="display:flex;">
+        <div class="panel" id="panelStart">
+          <div class="big">躲避障碍小游戏</div>
+          <div class="small">用左右键或屏幕两侧控制小方块，躲避从上方落下的障碍物。</div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button id="btnStart" class="primary">开始游戏</button>
+            <button id="btnHow">玩法说明</button>
+          </div>
+        </div>
+
+        <div class="panel" id="panelOver" style="display:none;">
+          <div class="big">游戏结束</div>
+          <div class="small">得分：<span id="finalScore">0</span> · 最高：<span id="finalBest">0</span></div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button id="btnRestart2" class="primary">再来一局</button>
+            <button id="btnShare" >分享成绩</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile touch controls (visible on touch devices) -->
+      <div id="touchControls" style="margin-top:12px; display:flex; justify-content:center;">
+        <div class="touch-pad">
+          <div id="leftTouch" class="touch-btn">← 左移</div>
+          <div id="rightTouch" class="touch-btn">右移 →</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+  简单躲避障碍游戏
+  说明：
+   - canvas 尺寸会按设备像素比调整，保证清晰度
+   - 障碍物以间隔生成，速度随分数线性增加
+   - 碰撞检测使用矩形 AABB 检测
+   - 可扩展：增加道具、不同障碍形状、音效等
+*/
+
+(() => {
+  // ---------- DOM ----------
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const panelStart = document.getElementById('panelStart');
+  const panelOver = document.getElementById('panelOver');
+  const btnStart = document.getElementById('btnStart');
+  const btnRestart = document.getElementById('btnRestart');
+  const btnRestart2 = document.getElementById('btnRestart2');
+  const btnPause = document.getElementById('btnPause');
+  const finalScore = document.getElementById('finalScore');
+  const finalBest = document.getElementById('finalBest');
+  const btnHow = document.getElementById('btnHow');
+  const leftTouch = document.getElementById('leftTouch');
+  const rightTouch = document.getElementById('rightTouch');
+  const btnShare = document.getElementById('btnShare');
+
+  // ---------- Config ----------
+  const cfg = {
+    baseObstacleInterval: 900, // ms between obstacles initially
+    baseObstacleSpeed: 150, // px/sec initial
+    speedIncreasePerPoint: 6, // px/sec added per score point
+    obstacleWidthRange: [30, 100],
+    obstacleHeightRange: [16, 28],
+    playerWidth: 48,
+    playerHeight: 18,
+    playerSpeed: 280, // px/sec horizontal
+    spawnXpadding: 8,
+  };
+
+  // ---------- State ----------
+  let width = 400, height = 600;
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+  let lastTime = 0;
+  let accSpawn = 0;
+  let obstacleTimer = 0;
+  let obstacles = [];
+  let score = 0;
+  let best = 0;
+  let running = false;
+  let paused = false;
+  let keys = { left:false, right:false };
+  let touchState = { left:false, right:false };
+  let gameSpeedMultiplier = 1;
+
+  // Player
+  const player = {
+    x: 0, y:0, w: cfg.playerWidth, h: cfg.playerHeight, vx:0
+  };
+
+  // ---------- Utilities ----------
+  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+  function rnd(min,max){ return Math.random()*(max-min)+min; }
+  function rectsCollide(a,b){
+    return !(a.x + a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h);
+  }
+
+  // ---------- Persistence ----------
+  function loadBest(){
+    try{
+      const v = localStorage.getItem('dodge_best_v1');
+      best = v ? parseInt(v,10) || 0 : 0;
+    }catch(e){ best = 0; }
+    bestEl.textContent = best;
+  }
+  function saveBest(){
+    try{ localStorage.setItem('dodge_best_v1', String(best)); }catch(e){}
+  }
+
+  // ---------- Canvas sizing ----------
+  function resize(){
+    // Keep a reasonable aspect ratio — full width, set height relative to width
+    const containerWidth = Math.min(900, document.querySelector('.wrap').clientWidth - 24);
+    width = Math.max(320, containerWidth);
+    // make canvas taller on desktop for nicer feel
+    height = Math.round(width * 1.2);
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0); // scale drawing to CSS pixels
+    // player initial pos
+    player.w = cfg.playerWidth;
+    player.h = cfg.playerHeight;
+    player.x = (width - player.w)/2;
+    player.y = height - player.h - 18;
+  }
+  window.addEventListener('resize', () => { resize(); });
+
+  // ---------- Game lifecycle ----------
+  function startGame(){
+    score = 0;
+    obstacles = [];
+    accSpawn = 0;
+    obstacleTimer = 0;
+    running = true;
+    paused = false;
+    lastTime = performance.now();
+    panelStart.style.display = 'none';
+    panelOver.style.display = 'none';
+    overlay.style.display = 'none';
+    btnPause.textContent = '暂停';
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    running = false;
+    overlay.style.display = 'flex';
+    panelOver.style.display = 'block';
+    panelStart.style.display = 'none';
+    finalScore.textContent = score;
+    if(score > best){ best = score; saveBest(); bestEl.textContent = best; }
+    finalBest.textContent = best;
+  }
+
+  function togglePause(){
+    if(!running) return;
+    paused = !paused;
+    btnPause.textContent = paused ? '继续' : '暂停';
+    if(!paused){
+      // resume loop
+      lastTime = performance.now();
+      requestAnimationFrame(loop);
+    }else{
+      // show a subtle overlay? We'll just stop updating.
+    }
+  }
+
+  // ---------- Spawning ----------
+  function spawnObstacle(){
+    const w = Math.round(rnd(...cfg.obstacleWidthRange));
+    const h = Math.round(rnd(...cfg.obstacleHeightRange));
+    const x = Math.round(rnd(cfg.spawnXpadding, width - w - cfg.spawnXpadding));
+    const baseSpeed = cfg.baseObstacleSpeed + score * cfg.speedIncreasePerPoint;
+    const vy = baseSpeed * gameSpeedMultiplier;
+    obstacles.push({ x, y: -h - 6, w, h, vy });
+  }
+
+  // ---------- Input ----------
+  window.addEventListener('keydown', (e) => {
+    if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = true;
+    if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = true;
+    if(e.key === ' ' || e.key === 'Spacebar'){ // space to pause
+      e.preventDefault();
+      togglePause();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if(e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
+    if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
+  });
+
+  // Touch buttons
+  leftTouch.addEventListener('touchstart', (e)=>{ e.preventDefault(); touchState.left = true; });
+  leftTouch.addEventListener('touchend',   (e)=>{ e.preventDefault(); touchState.left = false; });
+  leftTouch.addEventListener('touchcancel',(e)=>{ e.preventDefault(); touchState.left = false; });
+  rightTouch.addEventListener('touchstart',(e)=>{ e.preventDefault(); touchState.right = true; });
+  rightTouch.addEventListener('touchend',  (e)=>{ e.preventDefault(); touchState.right = false; });
+  rightTouch.addEventListener('touchcancel',(e)=>{ e.preventDefault(); touchState.right = false; });
+
+  // Touch-and-drag on canvas to move player — intuitive on mobile
+  let lastTouchX = null;
+  canvas.addEventListener('touchstart', (e) => {
+    if(e.touches.length === 1){
+      lastTouchX = e.touches[0].clientX;
+    }
+  }, { passive:false });
+  canvas.addEventListener('touchmove', (e) => {
+    if(!lastTouchX) lastTouchX = e.touches[0].clientX;
+    const t = e.touches[0];
+    const dx = t.clientX - lastTouchX;
+    // move player by dx (scale to canvas)
+    const cssToCanvas = canvas.width / (parseFloat(canvas.style.width) || width) ;
+    player.x += dx * cssToCanvas / dpr;
+    player.x = clamp(player.x, 0, width - player.w);
+    lastTouchX = t.clientX;
+    e.preventDefault();
+  }, { passive:false });
+  canvas.addEventListener('touchend', ()=> lastTouchX = null);
+
+  // Mouse drag also supported
+  let dragging = false;
+  canvas.addEventListener('mousedown', (e) => {
+    dragging = true; lastTouchX = e.clientX;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if(!dragging) return;
+    const dx = e.clientX - lastTouchX;
+    player.x += dx;
+    player.x = clamp(player.x, 0, width - player.w);
+    lastTouchX = e.clientX;
+  });
+  window.addEventListener('mouseup', ()=>{ dragging=false; lastTouchX=null; });
+
+  // ---------- Main loop ----------
+  function loop(ts){
+    if(!running) return;
+    if(paused){ lastTime = ts; requestAnimationFrame(loop); return; }
+    const dt = Math.min(40, ts - lastTime) / 1000; // cap dt for safety
+    lastTime = ts;
+
+    // update spawn timer and generate obstacles
+    const spawnInterval = Math.max(220, cfg.baseObstacleInterval - score*8); // faster spawns as score rises
+    obstacleTimer += (ts ? ts - (ts - dt*1000) : dt*1000);
+    accSpawn += dt*1000;
+    if(accSpawn >= spawnInterval){
+      accSpawn = accSpawn % spawnInterval;
+      spawnObstacle();
+    }
+
+    // update player velocity from input
+    const moveLeft = keys.left || touchState.left;
+    const moveRight = keys.right || touchState.right;
+    let intendedVX = 0;
+    if(moveLeft) intendedVX -= cfg.playerSpeed;
+    if(moveRight) intendedVX += cfg.playerSpeed;
+    player.vx = intendedVX;
+
+    // integrate player position
+    player.x += player.vx * dt;
+    player.x = clamp(player.x, 0, width - player.w);
+
+    // update obstacles
+    for(let i=obstacles.length-1;i>=0;i--){
+      const ob = obstacles[i];
+      ob.y += ob.vy * dt;
+      // if passed bottom, remove and increase score
+      if(ob.y > height + 40){
+        obstacles.splice(i,1);
+        score += 1;
+        scoreEl.textContent = score;
+      }
+    }
+
+    // collision detection
+    for(const ob of obstacles){
+      if(rectsCollide(player, ob)){
+        // hit!
+        endGame();
+        return;
+      }
+    }
+
+    // render
+    render();
+
+    // next frame
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- Rendering ----------
+  function render(){
+    // clear
+    ctx.fillStyle = '#061326';
+    ctx.fillRect(0,0,width,height);
+
+    // draw background grid / subtle stripes
+    const gsize = 28;
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#ffffff';
+    for(let x = 0; x < width; x += gsize){
+      ctx.fillRect(x, 0, 1, height);
+    }
+    for(let y = 0; y < height; y += gsize*2){
+      ctx.fillRect(0, y, width, 1);
+    }
+    ctx.restore();
+
+    // draw obstacles
+    for(const ob of obstacles){
+      const grad = ctx.createLinearGradient(ob.x, ob.y, ob.x+ob.w, ob.y+ob.h);
+      grad.addColorStop(0, '#FF7B7B');
+      grad.addColorStop(1, '#FF3D3D');
+      ctx.fillStyle = grad;
+      roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 4, true, false);
+      // inner shine
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(ob.x+4, ob.y+2, Math.min(20, ob.w-8), 2);
+      ctx.globalAlpha = 1;
+    }
+
+    // draw player
+    ctx.save();
+    ctx.beginPath();
+    ctx.fillStyle = '#38bdf8';
+    roundRect(ctx, player.x, player.y, player.w, player.h, 6, true, false);
+    ctx.restore();
+
+    // bottom shadow
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, height-6, width, 6);
+    ctx.restore();
+  }
+
+  // helper roundRect
+  function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+    if (typeof r === 'undefined') r = 5;
+    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+    ctx.beginPath();
+    ctx.moveTo(x + r.tl, y);
+    ctx.lineTo(x + w - r.tr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+    ctx.lineTo(x + w, y + h - r.br);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+    ctx.lineTo(x + r.bl, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+    ctx.lineTo(x, y + r.tl);
+    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+    ctx.closePath();
+    if (fill) ctx.fill();
+    if (stroke) ctx.stroke();
+  }
+
+  // ---------- Buttons ----------
+  btnStart.addEventListener('click', ()=> startGame());
+  btnRestart.addEventListener('click', ()=> {
+    if(!running) startGame();
+    else { // restart while running
+      if(confirm('正在游戏中，确认重开？')) startGame();
+    }
+  });
+  btnRestart2.addEventListener('click', ()=> startGame());
+  btnPause.addEventListener('click', ()=> togglePause());
+  btnHow.addEventListener('click', ()=>{
+    alert('玩法：控制底部的小方块向左或向右移动，躲避从上方掉落的长条障碍物。分数随躲避次数增加，难度也会逐渐增加。');
+  });
+
+  btnShare.addEventListener('click', ()=>{
+    const txt = `我在《躲避障碍》小游戏中得了 ${score} 分！最高分 ${best}。来挑战我吧！`;
+    if(navigator.share){
+      navigator.share({ title:'躲避障碍小游戏', text: txt }).catch(()=>{});
+    }else{
+      prompt('复制这条成绩并分享给朋友：', txt);
+    }
+  });
+
+  // ---------- Init ----------
+  loadBest();
+  resize();
+  // show start overlay
+  overlay.style.display = 'flex';
+  panelStart.style.display = 'block';
+  panelOver.style.display = 'none';
+
+  // ensure canvas won't scroll on mobile when touching
+  document.body.addEventListener('touchmove', function(e){ if(e.target === canvas) e.preventDefault(); }, { passive:false });
+
+  // small helper: start with a gentle difficulty to let player get used
+  // optional: we could show tutorial; for now user can press "开始游戏"
+})();
+</script>
+</body>
+</html>
